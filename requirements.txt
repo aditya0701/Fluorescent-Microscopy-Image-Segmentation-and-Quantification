@@ -1,0 +1,39 @@
+# BoutonViewer dependencies
+# Install with: pip install -r requirements.txt
+#
+# micro-sam must be installed from source or its own environment.
+# All other packages install cleanly from PyPI.
+#
+# Recommended: create a dedicated conda environment first:
+#   conda create -n bouton_viewer python=3.10
+#   conda activate bouton_viewer
+#   pip install -r requirements.txt
+#
+# Then install micro-sam following the official instructions:
+#   https://computational-cell-analytics.github.io/micro-sam/micro_sam.html
+
+# Desktop UI
+PyQt6>=6.6.0
+
+# 3D scientific visualisation
+pyvista>=0.43.0
+pyvistaqt>=0.11.0
+vtk>=9.3.0
+
+# Image I/O
+tifffile>=2024.1.1
+
+# Numerical and image processing
+numpy>=1.24.0
+scipy>=1.11.0
+scikit-image>=0.22.0
+
+# Deep learning runtime
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Progress display (used inside worker thread)
+tqdm>=4.66.0
+
+# micro-sam is installed separately — see note above.
+# micro-sam>=1.0.0
