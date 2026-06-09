@@ -176,22 +176,24 @@ def preprocess_lsm(
 
     img_bg   = _rolling_ball_subtraction(image, radius=50.0, progress=progress)
     img_norm = normalize_robust(img_bg)
+    del img_bg
 
     if progress:
         progress("Starting RL deconvolution", 0)
 
     img_deconv   = _richardson_lucy_deconvolution(img_norm, n_iter=15, progress=progress)
     img_combined = img_norm + img_deconv
+    del img_norm, img_deconv
 
     if progress:
         progress("Finalising preprocessing", 99)
 
-    # Per-channel min-max rescaling of the combined result.
     img_final = np.zeros_like(img_combined, dtype=np.float32)
     for c in range(img_combined.shape[1]):
         ch       = img_combined[:, c, :, :]
         mn, mx   = ch.min(), ch.max()
         img_final[:, c, :, :] = (ch - mn) / (mx - mn) if mx > mn else ch
+    del img_combined
 
     if progress:
         progress("Preprocessing complete", 100)
@@ -285,20 +287,10 @@ def to_microsam_rgb(image: np.ndarray) -> np.ndarray:
     if image.ndim != 4:
         raise ValueError(f"Expected 4-D (Z, C, Y, X) array, got shape {image.shape}")
 
-    low  = np.percentile(image, 0.00001)
-    high = np.percentile(image, 99.9999)
-
-    if high > low:
-        scaled = np.clip(
-            (image.astype(np.float32) - low) / (high - low), 0.0, 1.0
-        ) * 255.0
-    else:
-        scaled = np.zeros_like(image, dtype=np.float32)
-
     Z, C, Y, X = image.shape
     rgb = np.zeros((Z, Y, X, 3), dtype=np.float32)
 
     for c in range(min(C, 2)):
-        rgb[:, :, :, c] = scaled[:, c, :, :]
+        rgb[:, :, :, c] = image[:, c, :, :] * 255.0
 
-    return rgb.astype(np.float32)
+    return rgb

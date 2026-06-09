@@ -11,7 +11,7 @@ crashing the application.
 
 from __future__ import annotations
 import numpy as np
-from PyQt6.QtCore import QThread, pyqtSignal
+from qtpy.QtCore import QThread, Signal as pyqtSignal
 
 
 class PredictionWorker(QThread):
@@ -98,6 +98,7 @@ class PredictionWorker(QThread):
         # ----------------------------------------------------------
         self.progress.emit("Converting to RGB for MicroSAM…", 0)
         rgb_stack = to_microsam_rgb(preprocessed)
+        del preprocessed  # free before inference to reduce peak RAM
 
         # ----------------------------------------------------------
         # Step 3: inference + post-processing
