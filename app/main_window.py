@@ -13,6 +13,8 @@ Toolbar actions
 ---------------
   Load Image       — opens a TIFF file, asks LSM vs Airyscan, renders image
   Set Checkpoint   — sets the path to the MicroSAM .pt checkpoint file
+  Model            — selects the MicroSAM model variant (large/base) used
+                      the next time Predict is clicked
   Predict          — runs the full preprocessing + inference pipeline
   View toggle      — switches between 3D volume and 2D slice modes
 
@@ -30,7 +32,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QSlider, QFileDialog, QMessageBox,
     QProgressBar, QComboBox, QToolBar, QStatusBar, QDialog,
     QDialogButtonBox, QRadioButton, QLineEdit, QFormLayout,
-    QGroupBox, QStackedWidget,
+    QGroupBox, QStackedWidget, QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
@@ -52,13 +54,20 @@ class ImageTypeDialog(QDialog):
     loaded image.  The answer determines both the preprocessing pipeline
     that is applied and the physical voxel calibration used for all
     downstream measurements (see BoutonStore.VOXEL_SIZE_BY_TYPE).
+
+    The voxel size (z, y, x in µm) is shown alongside the modality choice
+    and may be edited manually.  Each modality remembers its own values
+    independently: switching the radio button swaps in that modality's
+    last-used values (the built-in default the first time, or whatever the
+    user previously typed for it), so toggling back and forth between
+    options never discards an edit made earlier in the same dialog session.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Image Acquisition Type")
         self.setModal(True)
-        self.setFixedSize(440, 190)
+        self.setFixedSize(440, 320)
 
         layout = QVBoxLayout(self)
         layout.addWidget(
@@ -81,9 +90,57 @@ class ImageTypeDialog(QDialog):
         layout.addWidget(self._airyscan_radio)
         layout.addWidget(self._airyscan_1100_radio)
 
+        # Per-modality voxel size memory, seeded from the built-in defaults.
+        self._voxel_by_type = dict(BoutonStore.VOXEL_SIZE_BY_TYPE)
+        self._current_type  = "LSM"
+
+        voxel_box = QGroupBox("Voxel size (µm)")
+        form      = QFormLayout(voxel_box)
+        self._z_spin = QDoubleSpinBox()
+        self._y_spin = QDoubleSpinBox()
+        self._x_spin = QDoubleSpinBox()
+        for spin in (self._z_spin, self._y_spin, self._x_spin):
+            spin.setDecimals(4)
+            spin.setRange(0.0001, 100.0)
+            spin.setSingleStep(0.001)
+        form.addRow("Z:", self._z_spin)
+        form.addRow("Y:", self._y_spin)
+        form.addRow("X:", self._x_spin)
+        layout.addWidget(voxel_box)
+
+        self._load_voxel_spins("LSM")
+
+        self._lsm_radio.toggled.connect(
+            lambda checked: checked and self._on_type_changed("LSM")
+        )
+        self._airyscan_radio.toggled.connect(
+            lambda checked: checked and self._on_type_changed("Airyscan")
+        )
+        self._airyscan_1100_radio.toggled.connect(
+            lambda checked: checked and self._on_type_changed("Airyscan_1100")
+        )
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
+
+    def _on_type_changed(self, new_type: str):
+        # Stash the values currently shown under the outgoing modality
+        # before loading the incoming one's, so repeated toggling preserves
+        # whatever the user typed for each modality.
+        self._voxel_by_type[self._current_type] = (
+            self._z_spin.value(), self._y_spin.value(), self._x_spin.value()
+        )
+        self._current_type = new_type
+        self._load_voxel_spins(new_type)
+
+    def _load_voxel_spins(self, image_type: str):
+        z, y, x = self._voxel_by_type.get(
+            image_type, BoutonStore.VOXEL_SIZE_BY_TYPE["LSM"]
+        )
+        self._z_spin.setValue(z)
+        self._y_spin.setValue(y)
+        self._x_spin.setValue(x)
 
     @property
     def image_type(self) -> str:
@@ -92,6 +149,11 @@ class ImageTypeDialog(QDialog):
         if self._airyscan_1100_radio.isChecked():
             return "Airyscan_1100"
         return "Airyscan"
+
+    @property
+    def voxel_size_um(self) -> tuple:
+        """Physical voxel size (z, y, x) in µm as currently shown in the spin boxes."""
+        return (self._z_spin.value(), self._y_spin.value(), self._x_spin.value())
 
 
 class CheckpointDialog(QDialog):
@@ -259,6 +321,14 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        toolbar.addWidget(QLabel("  Model: "))
+        self._model_combo = QComboBox()
+        self._model_combo.addItem("Large (vit_l_lm)", "vit_l_lm")
+        self._model_combo.addItem("Base (vit_b_lm)", "vit_b_lm")
+        toolbar.addWidget(self._model_combo)
+
+        toolbar.addSeparator()
+
         toolbar.addWidget(QLabel("  View: "))
         self._view_combo = QComboBox()
         self._view_combo.addItems(["3D Volume", "2D Slices"])
@@ -298,7 +368,8 @@ class MainWindow(QMainWindow):
         dlg = ImageTypeDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        image_type = dlg.image_type
+        image_type    = dlg.image_type
+        voxel_size_um = dlg.voxel_size_um
 
         self._status.showMessage(f"Loading {Path(path).name}…")
         QApplication_processEvents()
@@ -312,9 +383,10 @@ class MainWindow(QMainWindow):
 
         # Update the store.
         self._store.clear()
-        self._store.image      = raw
-        self._store.image_type = image_type
-        self._store.image_path = path
+        self._store.image         = raw
+        self._store.image_type    = image_type
+        self._store.image_path    = path
+        self._store.voxel_size_um = voxel_size_um
 
         # Configure the Z slider.
         Z = raw.shape[0]
@@ -364,6 +436,7 @@ class MainWindow(QMainWindow):
             image=self._store.image,
             image_type=self._store.image_type,
             checkpoint_path=self._checkpoint_path,
+            model_type=self._model_combo.currentData(),
             parent=self,
         )
         self._worker.progress.connect(self._on_prediction_progress)

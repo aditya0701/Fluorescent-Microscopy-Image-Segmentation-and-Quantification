@@ -36,3 +36,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# Generated resource-usage reports (app/model/resource_monitor.py)
+reports/

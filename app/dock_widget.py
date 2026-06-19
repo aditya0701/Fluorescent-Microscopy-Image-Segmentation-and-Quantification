@@ -17,7 +17,7 @@ from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFileDialog, QProgressBar, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame, QGroupBox,
-    QSizePolicy,
+    QSizePolicy, QFormLayout, QDoubleSpinBox,
 )
 from qtpy.QtCore import Qt, Signal
 from qtpy.QtGui import QFont
@@ -37,17 +37,30 @@ class BoutonDockWidget(QWidget):
         User clicked Predict.
     delete_requested(label_id)
         User clicked Delete (after confirmation in the controller).
+    voxel_size_changed(z, y, x)
+        User manually edited one of the voxel size spin boxes.  The
+        controller auto-fills these from the loaded image's actual pixel
+        dimensions (see BoutonStore.detect_airyscan_voxel_size); this signal
+        only fires for the user's own edits on top of that.
+    image_type_changed(image_type)
+        User changed the LSM/Airyscan combo.  Fired regardless of whether an
+        image is currently loaded — if one is, the controller reclassifies
+        it in place (recomputing voxel size, etc.) rather than requiring a
+        full reload to fix a wrong selection made at load time.
     """
 
-    load_requested    = Signal(str, str)
-    predict_requested = Signal()
-    delete_requested  = Signal(int)
+    load_requested       = Signal(str, str)
+    predict_requested    = Signal()
+    delete_requested     = Signal(int)
+    voxel_size_changed   = Signal(float, float, float)   # (z, y, x) in µm, user-edited
+    image_type_changed   = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(260)
         self.setMaximumWidth(340)
         self._selected_label: Optional[int] = None
+        self._suppress_voxel_signal = False   # True while filling spin boxes programmatically
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -74,6 +87,20 @@ class BoutonDockWidget(QWidget):
     def set_progress(self, step: str, pct: int):
         self._prog_label.setText(step)
         self._prog_bar.setValue(pct)
+
+    def set_voxel_size(self, z: float, y: float, x: float):
+        """
+        Fills the voxel size spin boxes without emitting voxel_size_changed —
+        used by the controller to display the value it auto-detected from
+        the loaded image's pixel dimensions.
+        """
+        self._suppress_voxel_signal = True
+        try:
+            self._vz_spin.setValue(z)
+            self._vy_spin.setValue(y)
+            self._vx_spin.setValue(x)
+        finally:
+            self._suppress_voxel_signal = False
 
     def set_hover_info(self, label_id: int, volume: float, surface_area: float):
         if label_id <= 0:
@@ -158,8 +185,10 @@ class BoutonDockWidget(QWidget):
         self._type_combo.addItems([
             "LSM (rolling ball + deconvolution)",
             "Airyscan (downscale to 1100 px if needed)",
-            "Airyscan, already 1100 px (normalisation only)",
         ])
+        self._type_combo.currentIndexChanged.connect(
+            lambda _idx: self.image_type_changed.emit(self._selected_image_type())
+        )
         load_layout.addWidget(self._type_combo)
 
         load_btn = QPushButton("Load TIFF…")
@@ -167,6 +196,26 @@ class BoutonDockWidget(QWidget):
         load_layout.addWidget(load_btn)
 
         layout.addWidget(load_group)
+
+        # ---- Voxel size section ----
+        # Auto-filled by the controller from the loaded image's actual pixel
+        # dimensions once it knows them (see BoutonStore.detect_airyscan_voxel_size);
+        # editable here in case the user wants to override the detected value.
+        voxel_group = QGroupBox("Voxel size (µm)")
+        voxel_form  = QFormLayout(voxel_group)
+        self._vz_spin = QDoubleSpinBox()
+        self._vy_spin = QDoubleSpinBox()
+        self._vx_spin = QDoubleSpinBox()
+        for spin in (self._vz_spin, self._vy_spin, self._vx_spin):
+            spin.setDecimals(4)
+            spin.setRange(0.0001, 100.0)
+            spin.setSingleStep(0.001)
+            spin.valueChanged.connect(self._on_voxel_spin_changed)
+        voxel_form.addRow("Z:", self._vz_spin)
+        voxel_form.addRow("Y:", self._vy_spin)
+        voxel_form.addRow("X:", self._vx_spin)
+
+        layout.addWidget(voxel_group)
 
         # ---- Checkpoint section ----
         ckpt_group = QGroupBox("MicroSAM Checkpoint")
@@ -182,6 +231,13 @@ class BoutonDockWidget(QWidget):
         browse_btn.clicked.connect(self._on_browse_checkpoint)
         ckpt_row.addWidget(browse_btn)
         ckpt_layout.addLayout(ckpt_row)
+
+        # Read only when Predict is clicked — changing this has no effect
+        # on a prediction already in flight or already completed.
+        self._model_combo = QComboBox()
+        self._model_combo.addItem("Large (vit_l_lm)", "vit_l_lm")
+        self._model_combo.addItem("Base (vit_b_lm)",  "vit_b_lm")
+        ckpt_layout.addWidget(self._model_combo)
 
         layout.addWidget(ckpt_group)
 
@@ -280,11 +336,22 @@ class BoutonDockWidget(QWidget):
 
     def _selected_image_type(self) -> str:
         idx = self._type_combo.currentIndex()
-        return ["LSM", "Airyscan", "Airyscan_1100"][idx]
+        return ["LSM", "Airyscan"][idx]
+
+    def _on_voxel_spin_changed(self, _value: float):
+        if self._suppress_voxel_signal:
+            return
+        self.voxel_size_changed.emit(
+            self._vz_spin.value(), self._vy_spin.value(), self._vx_spin.value()
+        )
 
     @property
     def image_type(self) -> str:
         return self._selected_image_type()
+
+    @property
+    def model_type(self) -> str:
+        return self._model_combo.currentData()
 
     def _on_row_selected(self):
         rows = self._table.selectedItems()

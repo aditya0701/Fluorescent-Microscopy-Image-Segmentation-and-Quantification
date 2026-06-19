@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import numpy as np
 
+from app.model.preprocessing import TARGET_XY
+
 
 # 20 visually distinct colours as (R, G, B) tuples in [0, 255].
 # The same list is used for PyVista hex colours in the 3D view and for
@@ -66,34 +68,76 @@ class BoutonStore:
     """
 
     # Physical voxel size (z_um, y_um, x_um) per acquisition type. All
-    # share the same 0.3 µm Z-step. Native Airyscan's computational
+    # share the same 0.3 µm Z-step. Native-resolution Airyscan's computational
     # super-resolution achieves finer lateral sampling (0.0425 µm) than
     # standard confocal/LSM scanning (0.0709 µm) — but downscaling Airyscan
-    # to 1100 px brings its field of view back in line with confocal's
-    # (1834px * 0.0425µm ≈ 1100px * 0.0709µm ≈ 78µm), so the *effective*
-    # pixel pitch of "Airyscan_1100" images matches the LSM value.
+    # to TARGET_XY px brings its field of view back in line with confocal's
+    # (1834px * 0.0425µm ≈ 1100px * 0.0709µm ≈ 78µm), so an Airyscan image
+    # already at or below TARGET_XY effectively has the LSM pitch. See
+    # detect_airyscan_voxel_size(), which picks between these two values
+    # from the image's actual pixel dimensions.
     VOXEL_SIZE_BY_TYPE = {
-        "LSM":           (0.3, 0.0709, 0.0709),
-        "Airyscan":      (0.3, 0.0425, 0.0425),
-        "Airyscan_1100": (0.3, 0.0709, 0.0709),
+        "LSM":      (0.3, 0.0709, 0.0709),
+        "Airyscan": (0.3, 0.0425, 0.0425),
     }
+
+    @classmethod
+    def detect_airyscan_voxel_size(cls, y: int, x: int) -> tuple:
+        """
+        Picks the Airyscan voxel pitch from the image's actual Y/X pixel
+        dimensions rather than a separate "already downscaled" flag, using
+        the same TARGET_XY threshold preprocess_airyscan uses to decide
+        whether to downscale: e.g. 1834x1834 (native) gets the finer
+        0.0425 µm pitch, 1100x1100 or 1101x1101 (already downscaled) gets
+        the LSM-matching 0.0709 µm pitch.
+        """
+        if max(y, x) > TARGET_XY:
+            return cls.VOXEL_SIZE_BY_TYPE["Airyscan"]
+        return cls.VOXEL_SIZE_BY_TYPE["LSM"]
+
+    @classmethod
+    def detect_voxel_size(cls, image_type: str, y: int, x: int) -> tuple:
+        """
+        Single entry point for deriving a voxel size from (image_type, Y, X) —
+        used at load time and whenever the image type selector changes
+        afterward, so both stay in sync without duplicating this branch.
+        """
+        if image_type == "LSM":
+            return cls.VOXEL_SIZE_BY_TYPE["LSM"]
+        return cls.detect_airyscan_voxel_size(y, x)
 
     def __init__(self):
         self.image:              Optional[np.ndarray] = None  # (Z, C, Y, X) float32 raw
         self.preprocessed_image: Optional[np.ndarray] = None  # (Z, C, Y, X) float32
+        # (image_type, model_type) the cached preprocessed_image was computed
+        # for — LSM preprocessing depends on model_type (see PredictionWorker),
+        # so a cache hit requires both to still match the current selection.
+        self.preprocessed_cache_key: Optional[tuple] = None
         self.labels:             Optional[np.ndarray] = None  # (Z, Y, X) uint32
         self.stats:              Dict[int, BoutonStats] = {}
         self.label_colors:       Dict[int, tuple] = {}        # label_id -> (R,G,B)
         self.image_type:         str = "LSM"
         self.image_path:         str = ""
         self._color_counter:     int = 0
+        self._voxel_size_override: Optional[tuple] = None
 
     @property
     def voxel_size_um(self) -> tuple:
-        """Physical voxel size (z, y, x) in µm for the current acquisition type."""
+        """
+        Physical voxel size (z, y, x) in µm.  Returns the manually-entered
+        value if one was set (see the setter, used by the load-image dialog
+        to apply a user override), otherwise the per-acquisition-type
+        default.
+        """
+        if self._voxel_size_override is not None:
+            return self._voxel_size_override
         return self.VOXEL_SIZE_BY_TYPE.get(
             self.image_type, self.VOXEL_SIZE_BY_TYPE["LSM"]
         )
+
+    @voxel_size_um.setter
+    def voxel_size_um(self, value: Optional[tuple]):
+        self._voxel_size_override = tuple(value) if value is not None else None
 
     # ------------------------------------------------------------------
     # State management
@@ -101,8 +145,9 @@ class BoutonStore:
 
     def clear(self):
         """Resets all session state except voxel size and image type."""
-        self.image              = None
-        self.preprocessed_image = None
+        self.image                  = None
+        self.preprocessed_image     = None
+        self.preprocessed_cache_key = None
         self.labels             = None
         self.stats              = {}
         self.label_colors       = {}
@@ -116,6 +161,15 @@ class BoutonStore:
         self.labels = labels.astype(np.uint32)
         self._assign_colors()
         self._compute_stats()
+
+    def recompute_stats(self):
+        """
+        Re-runs volume/surface-area statistics against the current label
+        array and voxel size.  Used when the user edits the voxel size
+        after a prediction has already run.
+        """
+        if self.labels is not None:
+            self._compute_stats()
 
     # ------------------------------------------------------------------
     # Per-bouton operations
