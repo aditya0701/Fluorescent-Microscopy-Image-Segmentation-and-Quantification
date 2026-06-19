@@ -38,7 +38,7 @@ sys.modules["__main__"].ChannelSafeIntensityAug = ChannelSafeIntensityAug
 
 TILE_SHAPE             = (896, 896)
 HALO                   = (64, 64)
-MODEL_TYPE             = "vit_l_lm"
+DEFAULT_MODEL_TYPE     = "vit_l_lm"
 BLOB_REMOVAL_THRESHOLD = 862   # minimum voxel count to retain an object
 MIN_Z_SPAN             = 3     # objects spanning this many Z slices or fewer
                                 # are removed as acquisition artefacts
@@ -47,20 +47,25 @@ MIN_Z_SPAN             = 3     # objects spanning this many Z slices or fewer
 _cached_predictor  = None
 _cached_segmenter  = None
 _cached_checkpoint = None
+_cached_model_type = None
 
 
 def load_model(
     checkpoint_path: str,
+    model_type:      str = DEFAULT_MODEL_TYPE,
     device:          Optional[str] = None,
 ) -> tuple:
     """
-    Loads the MicroSAM vit_l_lm predictor and segmenter from a .pt checkpoint.
-    Returns the cached instances if the same checkpoint was previously loaded.
+    Loads the MicroSAM predictor and segmenter from a .pt checkpoint.
+    Returns the cached instances if the same checkpoint and model variant
+    were previously loaded.
 
     Parameters
     ----------
     checkpoint_path : str
         Path to the best.pt checkpoint file.
+    model_type : str
+        MicroSAM model variant, e.g. 'vit_l_lm' (large) or 'vit_b_lm' (base).
     device : str, optional
         PyTorch device string.  Defaults to 'cuda' if a GPU is available,
         otherwise 'cpu'.
@@ -70,9 +75,9 @@ def load_model(
     tuple
         (predictor, segmenter) ready for use with automatic_instance_segmentation.
     """
-    global _cached_predictor, _cached_segmenter, _cached_checkpoint
+    global _cached_predictor, _cached_segmenter, _cached_checkpoint, _cached_model_type
 
-    if _cached_checkpoint == checkpoint_path:
+    if _cached_checkpoint == checkpoint_path and _cached_model_type == model_type:
         return _cached_predictor, _cached_segmenter
 
     from micro_sam.automatic_segmentation import get_predictor_and_segmenter
@@ -81,7 +86,7 @@ def load_model(
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
     predictor, segmenter = get_predictor_and_segmenter(
-        model_type=MODEL_TYPE,
+        model_type=model_type,
         checkpoint=checkpoint_path,
         device=device,
         is_tiled=True,
@@ -90,6 +95,7 @@ def load_model(
     _cached_predictor  = predictor
     _cached_segmenter  = segmenter
     _cached_checkpoint = checkpoint_path
+    _cached_model_type = model_type
 
     return predictor, segmenter
 
@@ -97,6 +103,7 @@ def load_model(
 def run_inference(
     rgb_stack:       np.ndarray,
     checkpoint_path: str,
+    model_type:      str = DEFAULT_MODEL_TYPE,
     device:          Optional[str] = None,
     progress:        Optional[Callable] = None,
 ) -> np.ndarray:
@@ -115,6 +122,8 @@ def run_inference(
         (Z, Y, X, 3) float32 array in [0, 255] as produced by to_microsam_rgb.
     checkpoint_path : str
         Path to the MicroSAM .pt checkpoint.
+    model_type : str
+        MicroSAM model variant, e.g. 'vit_l_lm' (large) or 'vit_b_lm' (base).
     device : str, optional
         PyTorch device.  Auto-detected if not provided.
     progress : callable, optional
@@ -135,7 +144,7 @@ def run_inference(
     if progress:
         progress("Loading model weights", 0)
 
-    predictor, segmenter = load_model(checkpoint_path, device)
+    predictor, segmenter = load_model(checkpoint_path, model_type, device)
 
     Z     = rgb_stack.shape[0]
     stack = []

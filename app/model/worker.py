@@ -10,6 +10,7 @@ crashing the application.
 """
 
 from __future__ import annotations
+from typing import Optional
 import numpy as np
 from qtpy.QtCore import QThread, Signal as pyqtSignal
 
@@ -23,23 +24,30 @@ class PredictionWorker(QThread):
     progress(step_name: str, pct: int)
         Emitted at each meaningful step so the UI can update its progress bar.
         pct is in [0, 100].
+    preprocessed_ready(preprocessed: np.ndarray)
+        Emitted once preprocessing has actually run (i.e. cached_preprocessed
+        was not supplied), so the caller can cache the result for the next
+        prediction on the same image.  Not emitted when the cache was used.
     finished(labels: np.ndarray)
         Emitted on success with the final (Z, Y, X) uint32 label array.
     error(message: str)
         Emitted on any exception with the human-readable error message.
     """
 
-    progress = pyqtSignal(str, int)       # (step_name, percent)
-    finished = pyqtSignal(object)         # np.ndarray passed as object to avoid
-                                          # issues with PyQt6 type registration
-    error    = pyqtSignal(str)
+    progress           = pyqtSignal(str, int)   # (step_name, percent)
+    preprocessed_ready = pyqtSignal(object)     # np.ndarray, passed as object
+    finished            = pyqtSignal(object)    # np.ndarray passed as object to avoid
+                                                 # issues with PyQt6 type registration
+    error               = pyqtSignal(str)
 
     def __init__(
         self,
-        image:           np.ndarray,
-        image_type:      str,
-        checkpoint_path: str,
-        device:          str | None = None,
+        image:               np.ndarray,
+        image_type:          str,
+        checkpoint_path:     str,
+        model_type:          str = "vit_l_lm",
+        device:              str | None = None,
+        cached_preprocessed: Optional[np.ndarray] = None,
         parent=None,
     ):
         """
@@ -48,23 +56,33 @@ class PredictionWorker(QThread):
         image : np.ndarray
             Raw (Z, C, Y, X) float32 array from the image loader.
         image_type : str
-            'LSM', 'Airyscan', or 'Airyscan_1100'.  'LSM' runs the full
-            background-subtraction + Richardson-Lucy deconvolution
-            pipeline; both Airyscan variants run the lighter
-            normalisation-only path (preprocess_airyscan), which
-            downscales to 1100 px only if the image is larger — a no-op
-            for images already at that size, such as 'Airyscan_1100'.
+            'LSM' or 'Airyscan'.  'LSM' runs the full background-subtraction
+            + Richardson-Lucy deconvolution pipeline; 'Airyscan' runs the
+            lighter normalisation-only path (preprocess_airyscan), which
+            downscales to 1100 px only if the image is larger — a no-op for
+            Airyscan images already at or below that size.
         checkpoint_path : str
             Absolute path to the MicroSAM .pt checkpoint file.
+        model_type : str
+            MicroSAM model variant to run inference with, e.g. 'vit_l_lm'
+            (large) or 'vit_b_lm' (base).
         device : str, optional
             PyTorch device string.  Auto-detected from CUDA availability
             if not provided.
+        cached_preprocessed : np.ndarray, optional
+            Result of a previous preprocessing run on this same image and
+            image_type.  When supplied, preprocessing is skipped entirely —
+            the caller (BoutonStore.preprocessed_image) is responsible for
+            invalidating this whenever a new image is loaded or the image
+            type changes.
         """
         super().__init__(parent)
-        self.image           = image
-        self.image_type      = image_type
-        self.checkpoint_path = checkpoint_path
-        self.device          = device
+        self.image               = image
+        self.image_type          = image_type
+        self.checkpoint_path     = checkpoint_path
+        self.model_type          = model_type
+        self.device              = device
+        self.cached_preprocessed = cached_preprocessed
 
     def run(self):
         try:
@@ -84,14 +102,27 @@ class PredictionWorker(QThread):
             self.progress.emit(step, pct)
 
         # ----------------------------------------------------------
-        # Step 1: preprocessing
+        # Step 1: preprocessing (skipped if a cached result was supplied)
         # ----------------------------------------------------------
-        self.progress.emit("Preprocessing image…", 0)
+        # The 'vit_b_lm' (Base) model is run without the LSM deconvolution
+        # pipeline — it uses the same lighter normalisation-only path as
+        # Airyscan (downscale-if-needed -> percentile normalisation to
+        # [0, 1]), skipping rolling-ball background subtraction and
+        # Richardson-Lucy deconvolution entirely.
+        use_lsm_deconv = self.image_type == "LSM" and self.model_type != "vit_b_lm"
 
-        if self.image_type == "LSM":
-            preprocessed = preprocess_lsm(self.image, progress=_progress)
+        if self.cached_preprocessed is not None:
+            self.progress.emit("Using cached preprocessed image…", 0)
+            preprocessed = self.cached_preprocessed
         else:
-            preprocessed = preprocess_airyscan(self.image, progress=_progress)
+            self.progress.emit("Preprocessing image…", 0)
+
+            if use_lsm_deconv:
+                preprocessed = preprocess_lsm(self.image, progress=_progress)
+            else:
+                preprocessed = preprocess_airyscan(self.image, progress=_progress)
+
+            self.preprocessed_ready.emit(preprocessed)
 
         # ----------------------------------------------------------
         # Step 2: convert to MicroSAM RGB format
@@ -106,6 +137,7 @@ class PredictionWorker(QThread):
         labels = run_inference(
             rgb_stack=rgb_stack,
             checkpoint_path=self.checkpoint_path,
+            model_type=self.model_type,
             device=self.device,
             progress=_progress,
         )
