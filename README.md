@@ -7,6 +7,18 @@ the raw channels and resulting labels in a [napari](https://napari.org)
 viewer, and reports per-bouton volume and surface area in physical units
 (µm³ / µm²).
 
+<p align="center">
+  <img src="assets/ground_truth.gif" width="45%" alt="Ground truth"/>
+  &nbsp;&nbsp;
+  <img src="assets/predictions.gif" width="45%" alt="Predicted segmentation"/>
+  <br/>
+  <em>Ground truth (left) vs. predicted segmentation (right)</em>
+  <br/><br/>
+  <img src="assets/original.gif" width="45%" alt="Original raw volume"/>
+  <br/>
+  <em>Original raw volume</em>
+</p>
+
 ## 1. Requirements
 
 - Python 3.10+ (a dedicated conda environment is recommended)

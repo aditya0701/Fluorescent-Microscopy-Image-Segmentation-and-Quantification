@@ -44,6 +44,8 @@ reports/
 scripts/
 gifs/
 *.gif
+# ...except the one used in the README — see assets/
+!assets/*.gif
 
 # Local test data
 test_label/
