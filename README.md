@@ -19,6 +19,13 @@ viewer, and reports per-bouton volume and surface area in physical units
   <em>Original raw volume</em>
 </p>
 
+> **Before using this on your own data**, read
+> [docs/model_notes.md](docs/model_notes.md) — it covers what the model
+> was actually trained on (2-channel BRP-shortcherry/Kenyon-cell signal,
+> specific voxel sizes), how LSM vs. Airyscan preprocessing differs, what
+> post-processing is applied, and why oversized/merged predictions aren't
+> auto-removed.
+
 ## 1. Requirements
 
 - Python 3.10+ (a dedicated conda environment is recommended)
@@ -61,10 +68,16 @@ https://computational-cell-analytics.github.io/micro-sam/micro_sam.html
 ### 2.4 Get the model checkpoints
 
 The `models/` folder is excluded from this repository via `.gitignore`
-(the checkpoint files are too large for GitHub). You need to obtain your
-trained `best.pt` checkpoint(s) separately and place them anywhere on
-disk — you will point the app at the exact file path from inside the UI,
-so the folder location doesn't matter.
+(the checkpoint files are too large for GitHub). Trained checkpoints
+(`best.pt`, both the Large `vit_l_lm` and Base `vit_b_lm` variants) are
+published on Hugging Face:
+https://huggingface.co/aditya0701/Drosophilla_melanogaster_Bouton_3d_segmentation/tree/main
+
+Download whichever variant you want and place it anywhere on disk — you
+will point the app at the exact file path from inside the UI, so the
+folder location doesn't matter. See
+[docs/model_notes.md](docs/model_notes.md) for what data these checkpoints
+were trained on and the conditions they're expected to work well under.
 
 ## 3. Running the app
 
@@ -157,8 +170,10 @@ the array and removed from the table — this cannot be undone.
 
 ## 5. Notes on the pipeline
 
-- Post-processing always applies 3D connected components (26-connectivity)
-  and removes objects smaller than 862 voxels.
+See [docs/model_notes.md](docs/model_notes.md) for what data the model
+expects, how voxel size is derived, and what preprocessing/post-processing
+is applied. A couple of implementation details that don't fit there:
+
 - Inference releases GPU memory after every Z-slice to avoid out-of-memory
   crashes on small-VRAM GPUs; this adds a small per-slice overhead that's
   the cost of that safety margin.
