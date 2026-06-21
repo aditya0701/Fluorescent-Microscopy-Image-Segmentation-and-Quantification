@@ -1,0 +1,6 @@
+theme: minima
+title: BoutonViewer
+description: 3D bouton segmentation and quantification for fluorescence microscopy.
+header_pages:
+  - model_notes.md
+show_excerpts: false
