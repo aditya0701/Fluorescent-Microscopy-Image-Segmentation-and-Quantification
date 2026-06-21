@@ -269,13 +269,18 @@ def to_microsam_rgb(image: np.ndarray) -> np.ndarray:
     uint8 RGB format expected by micro_sam.automatic_segmentation.
     Channel 0 (BRP-shortcherry red) maps to the R plane, channel 1
     (KC claws green) maps to the G plane.  The B plane is left at zero.
-    Global percentile scaling to [0, 255] is applied across the full stack,
-    matching the preprocess() function in the batch inference script.
+    This function only rescales [0, 1] -> [0, 255]; it does not itself do
+    any percentile clipping or normalisation — preprocess_lsm/
+    preprocess_airyscan are expected to have already normalised the input
+    to [0, 1] via normalize_robust before this is called. Passing in an
+    image that isn't already in [0, 1] will produce values outside
+    [0, 255] with no clipping.
 
     Parameters
     ----------
     image : np.ndarray
-        Preprocessed (Z, C, Y, X) float32 array in [0, 1].
+        Preprocessed (Z, C, Y, X) float32 array, expected to already be in
+        [0, 1] (see preprocess_lsm / preprocess_airyscan).
 
     Returns
     -------

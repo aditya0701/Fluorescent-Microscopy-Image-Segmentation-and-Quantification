@@ -39,3 +39,8 @@ desktop.ini
 
 # Generated resource-usage reports (app/model/resource_monitor.py)
 reports/
+
+# Local dev-only helper scripts and rendered demo GIFs — not part of the app
+scripts/
+gifs/
+*.gif

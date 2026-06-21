@@ -4,8 +4,10 @@ Single-file MicroSAM inference wrapper for BoutonViewer.  Adapted from the
 batch inference script (vit_l_lm_neo_augmented runs) for interactive use.
 
 The model is cached after the first load so that subsequent predictions on
-the same checkpoint do not reload weights from disk.  Calling load_model()
-with a different checkpoint path clears the cache automatically.
+the same checkpoint and model variant do not reload weights from disk. Up
+to MODEL_CACHE_SIZE distinct (checkpoint, model_type) pairs are kept at
+once (LRU-evicted) so flipping between model variants on the same
+checkpoint doesn't force a reload either.
 
 Post-processing mirrors the batch script:
   • 3-D connected components with full 26-connectivity structure.
@@ -15,6 +17,7 @@ Post-processing mirrors the batch script:
 """
 
 from __future__ import annotations
+from collections import OrderedDict
 from typing import Callable, Optional
 import sys
 import numpy as np
@@ -44,10 +47,13 @@ MIN_Z_SPAN             = 3     # objects spanning this many Z slices or fewer
                                 # are removed as acquisition artefacts
 
 # Module-level cache so the weights are not reloaded on every prediction.
-_cached_predictor  = None
-_cached_segmenter  = None
-_cached_checkpoint = None
-_cached_model_type = None
+# Keyed by (checkpoint_path, model_type) and capped at MODEL_CACHE_SIZE
+# entries (LRU-evicted) so switching back and forth between model variants
+# on the same checkpoint — e.g. comparing Large vs Base — doesn't force a
+# full reload each time, while still bounding GPU memory if many different
+# checkpoints get tried in one session.
+MODEL_CACHE_SIZE = 2
+_model_cache: "OrderedDict[tuple, tuple]" = OrderedDict()
 
 
 def load_model(
@@ -75,10 +81,11 @@ def load_model(
     tuple
         (predictor, segmenter) ready for use with automatic_instance_segmentation.
     """
-    global _cached_predictor, _cached_segmenter, _cached_checkpoint, _cached_model_type
+    cache_key = (checkpoint_path, model_type)
 
-    if _cached_checkpoint == checkpoint_path and _cached_model_type == model_type:
-        return _cached_predictor, _cached_segmenter
+    if cache_key in _model_cache:
+        _model_cache.move_to_end(cache_key)   # mark as most recently used
+        return _model_cache[cache_key]
 
     from micro_sam.automatic_segmentation import get_predictor_and_segmenter
 
@@ -92,10 +99,9 @@ def load_model(
         is_tiled=True,
     )
 
-    _cached_predictor  = predictor
-    _cached_segmenter  = segmenter
-    _cached_checkpoint = checkpoint_path
-    _cached_model_type = model_type
+    _model_cache[cache_key] = (predictor, segmenter)
+    if len(_model_cache) > MODEL_CACHE_SIZE:
+        _model_cache.popitem(last=False)   # evict the least recently used entry
 
     return predictor, segmenter
 

@@ -79,16 +79,25 @@ class BoutonController:
 
         vz, vy, vx = self._store.voxel_size_um
 
-        # channel_axis=1 splits (Z, C, Y, X) → two (Z, Y, X) Image layers.
-        # Each layer gets its own colourmap and blending mode, replicating the
-        # napari per-layer settings the user had: green=translucent, red=additive.
+        # channel_axis=1 splits (Z, C, Y, X) → one (Z, Y, X) Image layer per
+        # channel. napari requires any list-valued kwarg here to match the
+        # channel count exactly, but image_loader.load_and_standardize emits
+        # a dummy channel axis (C=1) for single-channel 3D TIFFs — passing
+        # the 2-channel colormap/blending/name lists for that case raises.
+        n_channels = raw.shape[1]
+        if n_channels == 2:
+            colormap, blending, name = ["green", "red"], ["translucent", "additive"], \
+                ["channel-0 (green)", "channel-1 (red)"]
+        else:
+            colormap, blending, name = "gray", "translucent", "channel-0"
+
         try:
             self._image_layers = self._viewer.add_image(
                 raw,
                 channel_axis=1,
-                colormap=["green", "red"],
-                blending=["translucent", "additive"],
-                name=["channel-0 (green)", "channel-1 (red)"],
+                colormap=colormap,
+                blending=blending,
+                name=name,
                 scale=(vz, vy, vx),
             )
         except Exception as exc:
@@ -256,7 +265,7 @@ class BoutonController:
                     return
             self._dock.set_hover_info(-1, 0.0, 0.0)
 
-        @layer.mouse_press_callbacks.append
+        @layer.mouse_drag_callbacks.append
         def _on_click(layer, event):
             if event.button != 1:
                 return

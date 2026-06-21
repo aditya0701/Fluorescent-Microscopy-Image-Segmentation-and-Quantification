@@ -88,6 +88,12 @@ class PredictionWorker(QThread):
         try:
             self._run_pipeline()
         except Exception as exc:
+            # The UI only ever shows str(exc) in a one-line message box —
+            # print the full traceback to the console too, otherwise the
+            # actual failure point (e.g. a CUDA OOM deep in micro_sam) is
+            # unrecoverable after the fact.
+            import traceback
+            traceback.print_exc()
             self.error.emit(str(exc))
 
     def _run_pipeline(self):

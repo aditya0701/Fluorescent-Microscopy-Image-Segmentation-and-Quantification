@@ -19,7 +19,7 @@ from qtpy.QtWidgets import (
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame, QGroupBox,
     QSizePolicy, QFormLayout, QDoubleSpinBox,
 )
-from qtpy.QtCore import Qt, Signal
+from qtpy.QtCore import Qt, Signal, QTimer
 from qtpy.QtGui import QFont
 
 from app.data.bouton_store import BoutonStats
@@ -61,6 +61,16 @@ class BoutonDockWidget(QWidget):
         self.setMaximumWidth(340)
         self._selected_label: Optional[int] = None
         self._suppress_voxel_signal = False   # True while filling spin boxes programmatically
+
+        # voxel_size_changed triggers a full per-label marching-cubes
+        # recompute (BoutonStore.recompute_stats) — emitting it straight off
+        # QDoubleSpinBox.valueChanged would re-run that for every keystroke
+        # or spinner click. Debounce so it only fires once editing settles.
+        self._voxel_debounce_timer = QTimer(self)
+        self._voxel_debounce_timer.setSingleShot(True)
+        self._voxel_debounce_timer.setInterval(400)
+        self._voxel_debounce_timer.timeout.connect(self._emit_voxel_size_changed)
+
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -303,6 +313,32 @@ class BoutonDockWidget(QWidget):
         self._table.setShowGrid(False)
         self._table.setSortingEnabled(True)
         self._table.itemSelectionChanged.connect(self._on_row_selected)
+        # Explicit colors instead of inheriting the host application's
+        # palette — napari's theme left cell text and the alternating row
+        # background too close in color (white-on-white in places).
+        self._table.setStyleSheet(
+            "QTableWidget {"
+            "  background-color: #2b2b2b;"
+            "  alternate-background-color: #353535;"
+            "  color: #e8e8e8;"
+            "  gridline-color: #3a3a3a;"
+            "  border: 1px solid #3a3a3a;"
+            "}"
+            "QTableWidget::item {"
+            "  color: #e8e8e8;"
+            "  padding: 2px;"
+            "}"
+            "QTableWidget::item:selected {"
+            "  background-color: #3a6ea5;"
+            "  color: #ffffff;"
+            "}"
+            "QHeaderView::section {"
+            "  background-color: #1e1e1e;"
+            "  color: #d4d4d4;"
+            "  padding: 4px;"
+            "  border: 1px solid #3a3a3a;"
+            "}"
+        )
         layout.addWidget(self._table, stretch=1)
 
         self._delete_btn = QPushButton("Delete Selected Bouton")
@@ -341,6 +377,9 @@ class BoutonDockWidget(QWidget):
     def _on_voxel_spin_changed(self, _value: float):
         if self._suppress_voxel_signal:
             return
+        self._voxel_debounce_timer.start()   # restarts the countdown on every change
+
+    def _emit_voxel_size_changed(self):
         self.voxel_size_changed.emit(
             self._vz_spin.value(), self._vy_spin.value(), self._vx_spin.value()
         )

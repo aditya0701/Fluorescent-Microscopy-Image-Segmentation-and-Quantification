@@ -79,7 +79,8 @@ right-hand side.
    - Supported layouts: 3D single-channel `(Z, Y, X)`, or 4D two-channel
      stacks in either `(Z, C, Y, X)` or `(C, Z, Y, X)` order — the loader
      infers which from the shape.
-3. The two channels appear as separate napari Image layers (green/red),
+3. Each channel appears as its own napari Image layer (green/red for a
+   2-channel stack; a single grayscale layer for a single-channel one),
    and the **Voxel size (µm)** boxes auto-fill based on the chosen type
    and the image's actual pixel dimensions (see §4.2).
 
@@ -99,9 +100,10 @@ directly if you know your calibration is different:
   super-resolution pitch `(0.3, 0.0425, 0.0425)`; an image already at or
   below 1100 px gets the LSM-matching pitch `(0.3, 0.0709, 0.0709)`.
 
-Editing these fields after a prediction has already run immediately
-recomputes the displayed volume/surface-area stats and rescales the 3D
-display — no need to re-run Predict.
+Editing these fields after a prediction has already run recomputes the
+displayed volume/surface-area stats and rescales the 3D display shortly
+after you stop typing/clicking (debounced, so it doesn't recompute on
+every keystroke) — no need to re-run Predict.
 
 ### 4.3 Set the checkpoint and model variant
 
