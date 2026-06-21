@@ -19,6 +19,13 @@ viewer, and reports per-bouton volume and surface area in physical units
   <em>Original raw volume</em>
 </p>
 
+> **Before using this on your own data**, read
+> [docs/model_notes.md](docs/model_notes.md) — it covers what the model
+> was actually trained on (2-channel BRP-shortcherry/Kenyon-cell signal,
+> specific voxel sizes), how LSM vs. Airyscan preprocessing differs, what
+> post-processing is applied, and why oversized/merged predictions aren't
+> auto-removed.
+
 ## 1. Requirements
 
 - Python 3.10+ (a dedicated conda environment is recommended)
@@ -157,8 +164,10 @@ the array and removed from the table — this cannot be undone.
 
 ## 5. Notes on the pipeline
 
-- Post-processing always applies 3D connected components (26-connectivity)
-  and removes objects smaller than 862 voxels.
+See [docs/model_notes.md](docs/model_notes.md) for what data the model
+expects, how voxel size is derived, and what preprocessing/post-processing
+is applied. A couple of implementation details that don't fit there:
+
 - Inference releases GPU memory after every Z-slice to avoid out-of-memory
   crashes on small-VRAM GPUs; this adds a small per-slice overhead that's
   the cost of that safety margin.
