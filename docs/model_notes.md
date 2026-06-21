@@ -1,3 +1,9 @@
+---
+layout: page
+title: Model & Data Notes
+permalink: /model_notes.html
+---
+
 # Model & Data Notes
 
 This page documents the conditions the included MicroSAM checkpoints were
