@@ -68,10 +68,16 @@ https://computational-cell-analytics.github.io/micro-sam/micro_sam.html
 ### 2.4 Get the model checkpoints
 
 The `models/` folder is excluded from this repository via `.gitignore`
-(the checkpoint files are too large for GitHub). You need to obtain your
-trained `best.pt` checkpoint(s) separately and place them anywhere on
-disk — you will point the app at the exact file path from inside the UI,
-so the folder location doesn't matter.
+(the checkpoint files are too large for GitHub). Trained checkpoints
+(`best.pt`, both the Large `vit_l_lm` and Base `vit_b_lm` variants) are
+published on Hugging Face:
+https://huggingface.co/aditya0701/Drosophilla_melanogaster_Bouton_3d_segmentation/tree/main
+
+Download whichever variant you want and place it anywhere on disk — you
+will point the app at the exact file path from inside the UI, so the
+folder location doesn't matter. See
+[docs/model_notes.md](docs/model_notes.md) for what data these checkpoints
+were trained on and the conditions they're expected to work well under.
 
 ## 3. Running the app
 
