@@ -20,11 +20,11 @@ viewer, and reports per-bouton volume and surface area in physical units
 </p>
 
 > **Before using this on your own data**, read
-> [docs/model_notes.md](docs/model_notes.md) — it covers what the model
-> was actually trained on (2-channel BRP-shortcherry/Kenyon-cell signal,
-> specific voxel sizes), how LSM vs. Airyscan preprocessing differs, what
-> post-processing is applied, and why oversized/merged predictions aren't
-> auto-removed.
+> [docs/model_notes.md](docs/model_notes.md) (also on the
+> [wiki](../../wiki/Model-Notes)) — it covers what the model was actually
+> trained on (2-channel BRP-shortcherry/Kenyon-cell signal, specific voxel
+> sizes), how LSM vs. Airyscan preprocessing differs, what post-processing
+> is applied, and why oversized/merged predictions aren't auto-removed.
 
 ## 1. Requirements
 
