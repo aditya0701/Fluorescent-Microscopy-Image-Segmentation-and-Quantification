@@ -20,9 +20,8 @@ viewer, and reports per-bouton volume and surface area in physical units
 </p>
 
 > **Before using this on your own data**, read the
-> [Model & Data Notes](https://aditya0701.github.io/Fluorescent-Microscopy-Image-Segmentation-and-Quantification/model_notes.html)
-> page (also at [docs/model_notes.md](docs/model_notes.md) and on the
-> [wiki](../../wiki/Model-Notes)) — it covers what the model was actually
+> [Model & Data Notes](../../wiki/Model-Notes) page (also at
+> [docs/model_notes.md](docs/model_notes.md)) — it covers what the model was actually
 > trained on (2-channel BRP-shortcherry/Kenyon-cell signal, specific voxel
 > sizes), how LSM vs. Airyscan preprocessing differs, what post-processing
 > is applied, and why oversized/merged predictions aren't auto-removed.
