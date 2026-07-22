@@ -1,5 +1,13 @@
 # BoutonViewer
 
+> [!IMPORTANT]
+> **New here? Start with the [wiki](../../wiki) — it's the full user manual.**
+> It has a [feature-by-feature walkthrough](../../wiki/How-To-Use) of every
+> control in the dock panel, plus the [Model & Data Notes](../../wiki/Model-Notes)
+> covering what the model was trained on, its voxel-size assumptions, and where
+> it should **not** be trusted. Read it before running BoutonViewer on your own
+> data.
+
 A desktop tool for segmenting and quantifying synaptic boutons in 3D
 fluorescence microscopy stacks. It runs a MicroSAM-based instance
 segmentation pipeline on confocal (LSM) or Airyscan TIFF stacks, displays
