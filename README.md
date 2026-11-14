@@ -94,13 +94,20 @@ right-hand side.
 
 ## 4. Using the app
 
+(A more detailed, feature-by-feature version of this section is also on
+the wiki: [How to Use](../../wiki/How-To-Use).)
+
 ### 4.1 Load an image
 
 1. In the **Image** section, pick the acquisition type from the dropdown:
-   - **LSM** — runs the full preprocessing pipeline (rolling-ball
-     background subtraction + Richardson-Lucy deconvolution).
-   - **Airyscan** — runs a lighter normalisation-only pipeline, and
-     downscales the image to 1100×1100 px first if it's larger.
+   - **LSM** — runs rolling-ball background subtraction plus, optionally,
+     Richardson-Lucy deconvolution (see the **Apply RL deconvolution**
+     checkbox below the dropdown — checked by default, uncheck it for a
+     faster/lighter run).
+   - **Airyscan** — runs a lighter normalisation-only pipeline; no
+     deconvolution step.
+   - Both paths resize the image to 1100×1100 px first, upscaling or
+     downscaling as needed — a no-op if it's already that size.
 2. Click **Load TIFF…** and select a `.tif`/`.tiff` stack.
    - Supported layouts: 3D single-channel `(Z, Y, X)`, or 4D two-channel
      stacks in either `(Z, C, Y, X)` or `(C, Z, Y, X)` order — the loader
@@ -135,11 +142,14 @@ every keystroke) — no need to re-run Predict.
 
 1. In the **MicroSAM Checkpoint** section, click **…** and select your
    `best.pt` file.
-2. Choose the model variant: **Large (vit_l_lm)** or **Base (vit_b_lm)**.
-   - For **LSM** images, the Base variant also skips the deconvolution
-     preprocessing step entirely and uses the same lighter
-     normalisation-only path as Airyscan — useful if you want a faster,
-     lighter run.
+2. Choose the model variant: **Large (`vit_l_lm`)** or **Base (`vit_b_lm`)**.
+   - This only affects inference speed/quality, not preprocessing. (In
+     earlier versions, selecting Base on an LSM image automatically
+     switched preprocessing to the lighter, deconvolution-free path used
+     for Airyscan — that automatic coupling has been removed.)
+   - Deconvolution for LSM images is now controlled independently via the
+     **Apply RL deconvolution** checkbox in §4.1, regardless of which
+     model variant (Base or Large) you pick.
    - This is read only at the moment you click Predict, so it's safe to
      change beforehand.
 
@@ -151,9 +161,10 @@ upscaling). When it finishes, a "boutons" Labels layer is added to the
 napari viewer and the stats table on the right fills in.
 
 Re-running Predict on the same loaded image with the same image type and
-model variant skips preprocessing and reuses the cached result — only
-inference reruns. Changing the model variant, image type, or loading a
-new image invalidates that cache automatically.
+deconvolution setting skips preprocessing and reuses the cached result —
+only inference reruns, so switching between the Large and Base model
+variant alone is fast. Changing the image type, toggling deconvolution, or
+loading a new image invalidates that cache automatically.
 
 ### 4.5 Inspect results
 
@@ -162,8 +173,18 @@ new image invalidates that cache automatically.
 - **Click** a bouton to highlight its row in the stats table.
 - The table lists every detected bouton with its volume (µm³) and
   surface area (µm²); columns are sortable.
+- **Total boutons** above the table shows the current count, updating live
+  as boutons are deleted.
 
-### 4.6 Delete a bouton
+### 4.6 Export the stats table
+
+Click **Export CSV…** (enabled once at least one bouton is detected) and
+pick a destination file. The CSV is written with German-locale
+conventions — `;` field separator, `,` decimal separator, UTF-8 with a BOM
+— so it opens correctly in German-locale Excel/Calc without a manual
+import step.
+
+### 4.7 Delete a bouton
 
 Select a row in the table (or click a bouton in the viewer) and click
 **Delete Selected Bouton**. After confirming, the label is zeroed out of

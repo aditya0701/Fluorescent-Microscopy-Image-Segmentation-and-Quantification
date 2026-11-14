@@ -46,6 +46,7 @@ class PredictionWorker(QThread):
         image_type:          str,
         checkpoint_path:     str,
         model_type:          str = "vit_l_lm",
+        apply_deconvolution: bool = True,
         device:              str | None = None,
         cached_preprocessed: Optional[np.ndarray] = None,
         parent=None,
@@ -56,31 +57,36 @@ class PredictionWorker(QThread):
         image : np.ndarray
             Raw (Z, C, Y, X) float32 array from the image loader.
         image_type : str
-            'LSM' or 'Airyscan'.  'LSM' runs the full background-subtraction
-            + Richardson-Lucy deconvolution pipeline; 'Airyscan' runs the
-            lighter normalisation-only path (preprocess_airyscan), which
-            downscales to 1100 px only if the image is larger — a no-op for
-            Airyscan images already at or below that size.
+            'LSM' or 'Airyscan'.  'LSM' runs the background-subtraction
+            (+ optional Richardson-Lucy deconvolution) pipeline; 'Airyscan'
+            runs the lighter normalisation-only path (preprocess_airyscan).
+            Both resize XY to 1100 px (up or down) if not already that size.
         checkpoint_path : str
             Absolute path to the MicroSAM .pt checkpoint file.
         model_type : str
             MicroSAM model variant to run inference with, e.g. 'vit_l_lm'
-            (large) or 'vit_b_lm' (base).
+            (large) or 'vit_b_lm' (base).  Only affects inference, not
+            preprocessing.
+        apply_deconvolution : bool
+            Whether to run Richardson-Lucy deconvolution as part of the LSM
+            preprocessing path. Ignored for 'Airyscan', which never applies
+            deconvolution.
         device : str, optional
             PyTorch device string.  Auto-detected from CUDA availability
             if not provided.
         cached_preprocessed : np.ndarray, optional
-            Result of a previous preprocessing run on this same image and
-            image_type.  When supplied, preprocessing is skipped entirely —
-            the caller (BoutonStore.preprocessed_image) is responsible for
-            invalidating this whenever a new image is loaded or the image
-            type changes.
+            Result of a previous preprocessing run on this same image,
+            image_type, and apply_deconvolution setting.  When supplied,
+            preprocessing is skipped entirely — the caller
+            (BoutonStore.preprocessed_image) is responsible for invalidating
+            this whenever a new image is loaded or either setting changes.
         """
         super().__init__(parent)
         self.image               = image
         self.image_type          = image_type
         self.checkpoint_path     = checkpoint_path
         self.model_type          = model_type
+        self.apply_deconvolution = apply_deconvolution
         self.device              = device
         self.cached_preprocessed = cached_preprocessed
 
@@ -110,21 +116,18 @@ class PredictionWorker(QThread):
         # ----------------------------------------------------------
         # Step 1: preprocessing (skipped if a cached result was supplied)
         # ----------------------------------------------------------
-        # The 'vit_b_lm' (Base) model is run without the LSM deconvolution
-        # pipeline — it uses the same lighter normalisation-only path as
-        # Airyscan (downscale-if-needed -> percentile normalisation to
-        # [0, 1]), skipping rolling-ball background subtraction and
-        # Richardson-Lucy deconvolution entirely.
-        use_lsm_deconv = self.image_type == "LSM" and self.model_type != "vit_b_lm"
-
         if self.cached_preprocessed is not None:
             self.progress.emit("Using cached preprocessed image…", 0)
             preprocessed = self.cached_preprocessed
         else:
             self.progress.emit("Preprocessing image…", 0)
 
-            if use_lsm_deconv:
-                preprocessed = preprocess_lsm(self.image, progress=_progress)
+            if self.image_type == "LSM":
+                preprocessed = preprocess_lsm(
+                    self.image,
+                    progress=_progress,
+                    apply_deconvolution=self.apply_deconvolution,
+                )
             else:
                 preprocessed = preprocess_airyscan(self.image, progress=_progress)
 
@@ -149,8 +152,8 @@ class PredictionWorker(QThread):
         )
 
         # ----------------------------------------------------------
-        # Step 4: upscale labels to original XY dimensions if the
-        # Airyscan path downscaled the image to 1100×1100.
+        # Step 4: resize labels back to the original XY dimensions if
+        # preprocessing resized the image to 1100x1100 (either path).
         # ----------------------------------------------------------
         orig_Y = self.image.shape[2]
         orig_X = self.image.shape[3]

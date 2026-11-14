@@ -16,6 +16,7 @@ Responsibilities
 """
 
 from __future__ import annotations
+import csv
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ from qtpy.QtWidgets import QMessageBox, QFileDialog
 
 from app.data.image_loader import load_and_standardize
 from app.data.bouton_store import BoutonStore
+from app.dock_widget import elide_filename
 
 
 class BoutonController:
@@ -40,8 +42,10 @@ class BoutonController:
         dock.load_requested.connect(self._on_load)
         dock.predict_requested.connect(self._on_predict)
         dock.delete_requested.connect(self._on_delete)
+        dock.export_requested.connect(self._on_export)
         dock.voxel_size_changed.connect(self._on_voxel_size_changed)
         dock.image_type_changed.connect(self._on_image_type_changed)
+        dock.deconvolution_changed.connect(self._on_deconvolution_changed)
 
     # ------------------------------------------------------------------
     # Load
@@ -110,7 +114,7 @@ class BoutonController:
         self._viewer.reset_view()
 
         self._dock.set_status(
-            f"Loaded: {Path(path).name}  |  shape: {raw.shape}  |  type: {image_type}"
+            f"Loaded: {elide_filename(Path(path).name)}  |  shape: {raw.shape}  |  type: {image_type}"
         )
         self._dock.set_predict_enabled(bool(self._dock.checkpoint_path))
         self._dock.clear_stats()
@@ -134,8 +138,12 @@ class BoutonController:
         self._dock.set_progress_visible(True)
         self._dock.set_status("Starting prediction…")
 
-        model_type = self._dock.model_type
-        cache_key  = (self._store.image_type, model_type)
+        model_type   = self._dock.model_type
+        apply_deconv = self._dock.apply_deconvolution
+        # Preprocessing depends on image_type and apply_deconvolution only —
+        # model_type affects inference alone, so switching between MicroSAM
+        # variants doesn't force a re-preprocess.
+        cache_key = (self._store.image_type, apply_deconv)
         cached = (
             self._store.preprocessed_image
             if self._store.preprocessed_cache_key == cache_key
@@ -151,6 +159,7 @@ class BoutonController:
             image_type=self._store.image_type,
             checkpoint_path=checkpoint,
             model_type=model_type,
+            apply_deconvolution=apply_deconv,
             cached_preprocessed=cached,
         )
         self._worker.progress.connect(self._on_progress)
@@ -232,6 +241,14 @@ class BoutonController:
         self._dock.update_stats(self._store.get_stats_list())
         self._dock.set_status(f"Image type changed to {image_type}.")
 
+    def _on_deconvolution_changed(self, _enabled: bool):
+        # Preprocessing for LSM depends on this flag, so any cached result
+        # computed under the old setting is no longer valid. Only affects
+        # the next Predict — doesn't retroactively change an existing
+        # labels layer.
+        self._store.preprocessed_image     = None
+        self._store.preprocessed_cache_key = None
+
     def _on_error(self, message: str):
         QMessageBox.critical(None, "Prediction Error", message)
         self._dock.set_progress_visible(False)
@@ -307,3 +324,29 @@ class BoutonController:
         self._dock.set_status(
             f"Bouton {label_id} removed.  {self._store.total_count} boutons remaining."
         )
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _on_export(self, path: str):
+        # German locale conventions: ";" as the field separator (since "," is
+        # the decimal separator there) and "," instead of "." in numbers, so
+        # the file opens correctly in German-locale Excel/Calc without a
+        # manual import wizard. utf-8-sig adds a BOM so Excel detects UTF-8
+        # instead of misreading the µm³/µm² unit suffixes as Latin-1.
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f, delimiter=";")
+                writer.writerow(["label_id", "volume_um3", "surface_area_um2"])
+                for s in self._store.get_stats_list():
+                    writer.writerow([
+                        s.label_id,
+                        f"{s.volume_um3:.3f}".replace(".", ","),
+                        f"{s.surface_area_um2:.3f}".replace(".", ","),
+                    ])
+        except OSError as exc:
+            QMessageBox.critical(None, "Export Error", str(exc))
+            return
+
+        self._dock.set_status(f"Exported stats to {Path(path).name}.")

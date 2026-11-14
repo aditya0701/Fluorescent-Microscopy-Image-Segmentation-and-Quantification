@@ -109,9 +109,9 @@ class BoutonStore:
     def __init__(self):
         self.image:              Optional[np.ndarray] = None  # (Z, C, Y, X) float32 raw
         self.preprocessed_image: Optional[np.ndarray] = None  # (Z, C, Y, X) float32
-        # (image_type, model_type) the cached preprocessed_image was computed
-        # for — LSM preprocessing depends on model_type (see PredictionWorker),
-        # so a cache hit requires both to still match the current selection.
+        # (image_type, apply_deconvolution) the cached preprocessed_image was
+        # computed for — a cache hit requires both to still match the
+        # current selection (see PredictionWorker/BoutonController._on_predict).
         self.preprocessed_cache_key: Optional[tuple] = None
         self.labels:             Optional[np.ndarray] = None  # (Z, Y, X) uint32
         self.stats:              Dict[int, BoutonStats] = {}

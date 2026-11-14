@@ -17,7 +17,7 @@ from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFileDialog, QProgressBar, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFrame, QGroupBox,
-    QSizePolicy, QFormLayout, QDoubleSpinBox,
+    QSizePolicy, QFormLayout, QDoubleSpinBox, QScrollArea, QCheckBox,
 )
 from qtpy.QtCore import Qt, Signal, QTimer
 from qtpy.QtGui import QFont
@@ -37,6 +37,8 @@ class BoutonDockWidget(QWidget):
         User clicked Predict.
     delete_requested(label_id)
         User clicked Delete (after confirmation in the controller).
+    export_requested(path)
+        User picked a destination file to export the stats table to.
     voxel_size_changed(z, y, x)
         User manually edited one of the voxel size spin boxes.  The
         controller auto-fills these from the loaded image's actual pixel
@@ -47,13 +49,20 @@ class BoutonDockWidget(QWidget):
         image is currently loaded — if one is, the controller reclassifies
         it in place (recomputing voxel size, etc.) rather than requiring a
         full reload to fix a wrong selection made at load time.
+    deconvolution_changed(enabled)
+        User toggled the "Apply RL deconvolution" checkbox. Only meaningful
+        for LSM images; the controller invalidates any cached preprocessed
+        result so the next Predict re-runs preprocessing under the new
+        setting.
     """
 
-    load_requested       = Signal(str, str)
-    predict_requested    = Signal()
-    delete_requested     = Signal(int)
-    voxel_size_changed   = Signal(float, float, float)   # (z, y, x) in µm, user-edited
-    image_type_changed   = Signal(str)
+    load_requested        = Signal(str, str)
+    predict_requested     = Signal()
+    delete_requested      = Signal(int)
+    export_requested      = Signal(str)
+    voxel_size_changed    = Signal(float, float, float)   # (z, y, x) in µm, user-edited
+    image_type_changed    = Signal(str)
+    deconvolution_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -133,6 +142,7 @@ class BoutonDockWidget(QWidget):
             self._table.setItem(row, 2, _NumericItem(f"{s.surface_area_um2:.3f}"))
         self._count_label.setText(f"Total boutons: {len(stats_list)}")
         self._table.setSortingEnabled(True)
+        self._export_btn.setEnabled(bool(stats_list))
 
     def clear_stats(self):
         self._table.setRowCount(0)
@@ -140,6 +150,7 @@ class BoutonDockWidget(QWidget):
         self._hover_box.setText("Hover over a bouton to see its details.")
         self._selected_label = None
         self._delete_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
 
     def highlight_row(self, label_id: int):
         self._table.itemSelectionChanged.disconnect(self._on_row_selected)
@@ -165,13 +176,26 @@ class BoutonDockWidget(QWidget):
         if self._selected_label == label_id:
             self._selected_label = None
             self._delete_btn.setEnabled(False)
+        self._export_btn.setEnabled(self._table.rowCount() > 0)
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        outer_layout.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
@@ -193,13 +217,23 @@ class BoutonDockWidget(QWidget):
 
         self._type_combo = QComboBox()
         self._type_combo.addItems([
-            "LSM (rolling ball + deconvolution)",
-            "Airyscan (downscale to 1100 px if needed)",
+            "LSM (rolling ball background subtraction)",
+            "Airyscan (resize to 1100 px if needed)",
         ])
-        self._type_combo.currentIndexChanged.connect(
-            lambda _idx: self.image_type_changed.emit(self._selected_image_type())
-        )
+        self._type_combo.currentIndexChanged.connect(self._on_type_combo_changed)
         load_layout.addWidget(self._type_combo)
+
+        self._deconv_checkbox = QCheckBox("Apply RL deconvolution")
+        self._deconv_checkbox.setChecked(True)
+        self._deconv_checkbox.setToolTip(
+            "Richardson-Lucy deconvolution step of the LSM preprocessing "
+            "pipeline. Only applies when 'LSM' is selected above; has no "
+            "effect for Airyscan."
+        )
+        self._deconv_checkbox.toggled.connect(
+            lambda checked: self.deconvolution_changed.emit(checked)
+        )
+        load_layout.addWidget(self._deconv_checkbox)
 
         load_btn = QPushButton("Load TIFF…")
         load_btn.clicked.connect(self._on_load_clicked)
@@ -279,9 +313,16 @@ class BoutonDockWidget(QWidget):
         layout.addWidget(_separator())
 
         # ---- Stats section ----
+        stats_header = QHBoxLayout()
         self._count_label = QLabel("Total boutons: —")
         self._count_label.setFont(QFont("Segoe UI", 9))
-        layout.addWidget(self._count_label)
+        stats_header.addWidget(self._count_label)
+        stats_header.addStretch(1)
+        self._export_btn = QPushButton("Export CSV…")
+        self._export_btn.setEnabled(False)
+        self._export_btn.clicked.connect(self._on_export_clicked)
+        stats_header.addWidget(self._export_btn)
+        layout.addLayout(stats_header)
 
         self._hover_box = QLabel("Hover over a bouton to see its details.")
         self._hover_box.setWordWrap(True)
@@ -359,7 +400,9 @@ class BoutonDockWidget(QWidget):
             return
         image_type = self._selected_image_type()
         from pathlib import Path
-        self._path_label.setText(Path(path).name)
+        name = Path(path).name
+        self._path_label.setText(elide_filename(name))
+        self._path_label.setToolTip(name)
         self.load_requested.emit(path, image_type)
 
     def _on_browse_checkpoint(self):
@@ -373,6 +416,11 @@ class BoutonDockWidget(QWidget):
     def _selected_image_type(self) -> str:
         idx = self._type_combo.currentIndex()
         return ["LSM", "Airyscan"][idx]
+
+    def _on_type_combo_changed(self, _idx: int):
+        image_type = self._selected_image_type()
+        self._deconv_checkbox.setEnabled(image_type == "LSM")
+        self.image_type_changed.emit(image_type)
 
     def _on_voxel_spin_changed(self, _value: float):
         if self._suppress_voxel_signal:
@@ -392,6 +440,10 @@ class BoutonDockWidget(QWidget):
     def model_type(self) -> str:
         return self._model_combo.currentData()
 
+    @property
+    def apply_deconvolution(self) -> bool:
+        return self._deconv_checkbox.isChecked()
+
     def _on_row_selected(self):
         rows = self._table.selectedItems()
         if not rows:
@@ -408,6 +460,13 @@ class BoutonDockWidget(QWidget):
         if self._selected_label is not None:
             self.delete_requested.emit(self._selected_label)
 
+    def _on_export_clicked(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Bouton Stats", "bouton_stats.csv", "CSV files (*.csv)"
+        )
+        if path:
+            self.export_requested.emit(path)
+
 
 # ------------------------------------------------------------------
 # Helpers
@@ -418,6 +477,21 @@ def _separator() -> QFrame:
     sep.setFrameShape(QFrame.HLine)
     sep.setFrameShadow(QFrame.Sunken)
     return sep
+
+
+def elide_filename(name: str, max_len: int = 36) -> str:
+    """
+    Truncates a long, space-free filename to max_len characters, keeping
+    the start and end (so the extension stays visible) with a "…" in the
+    middle. A single unbroken long filename defeats QLabel word-wrap (Qt
+    only breaks at spaces), which was pushing the sidebar wider than the
+    dock and clipping content off the right edge.
+    """
+    if len(name) <= max_len:
+        return name
+    keep_start = (max_len - 1) // 2
+    keep_end   = max_len - 1 - keep_start
+    return f"{name[:keep_start]}…{name[-keep_end:]}"
 
 
 class _NumericItem(QTableWidgetItem):

@@ -2,20 +2,26 @@
 preprocessing.py
 Image preprocessing pipeline for BoutonViewer.  Two paths are supported,
 selected based on the acquisition type reported by the user at load time.
+Both paths first resize XY to exactly TARGET_XY (1100 px), up or down as
+needed, since the rolling-ball radius, deconvolution PSF sigmas, and the
+model itself were all tuned at that scale.
 
 LSM path
 --------
-Rolling ball background subtraction (radius 50) → robust percentile
-normalisation → Richardson-Lucy deconvolution (15 iterations per channel,
-PSF sigma 1.75 for red and 1.50 for green) → combine normalised and
-deconvolved results → final per-channel min-max normalisation.
-This matches the pipeline documented in image_deconvolve.ipynb.
+Resize to 1100x1100 → rolling ball background subtraction (radius 50) →
+robust percentile normalisation → optionally, Richardson-Lucy
+deconvolution (15 iterations per channel, PSF sigma 1.75 for red and 1.50
+for green) → combine normalised and deconvolved results → final
+per-channel min-max normalisation. This matches the pipeline documented in
+image_deconvolve.ipynb. Deconvolution is a user-toggleable step (see
+apply_deconvolution), independent of which MicroSAM model variant is used
+for inference.
 
 Airyscan path
 -------------
-Downsample XY to 1100 px if necessary → robust percentile normalisation.
-No deconvolution is applied because Airyscan data already incorporates
-computational super-resolution deconvolution at acquisition time.
+Resize to 1100x1100 → robust percentile normalisation. No deconvolution is
+applied because Airyscan data already incorporates computational
+super-resolution deconvolution at acquisition time.
 
 Both paths emit a progress_callback(step: str, pct: int) so the calling
 QThread worker can relay progress to the main-thread progress bar.
@@ -54,6 +60,42 @@ def normalize_robust(
             channel, in_range=(lo, hi), out_range=(0.0, 1.0)
         )
     return normalised
+
+
+def resize_to_target(
+    image:    np.ndarray,
+    target:   int = TARGET_XY,
+    progress: Optional[Callable] = None,
+) -> np.ndarray:
+    """
+    Resizes a (Z, C, Y, X) float32 stack's XY dimensions to exactly
+    target x target, downscaling or upscaling with bilinear interpolation
+    as needed.  No-op (returns the input unchanged) if already at the
+    target size.
+    """
+    Z, C, Y, X = image.shape
+    if Y == target and X == target:
+        return image
+
+    from skimage.transform import resize as sk_resize
+
+    if progress:
+        progress(f"Resizing to {target}x{target} px", 0)
+
+    resized = np.zeros((Z, C, target, target), dtype=np.float32)
+    for z in range(Z):
+        for c in range(C):
+            resized[z, c] = sk_resize(
+                image[z, c],
+                (target, target),
+                order=1,               # bilinear interpolation
+                preserve_range=True,
+            )
+        if progress:
+            pct = int(100 * (z + 1) / Z)
+            progress(f"Resizing to {target}x{target} px", pct)
+
+    return resized
 
 
 # ------------------------------------------------------------------
@@ -143,20 +185,22 @@ def _richardson_lucy_deconvolution(
 # ------------------------------------------------------------------
 
 def preprocess_lsm(
-    image:    np.ndarray,
-    progress: Optional[Callable] = None,
+    image:               np.ndarray,
+    progress:            Optional[Callable] = None,
+    apply_deconvolution: bool = True,
 ) -> np.ndarray:
-    if image.ndim != 4:
-        raise ValueError(f"Expected 4-D (Z, C, Y, X) array, got shape {image.shape}")
     """
     Full LSM preprocessing pipeline matching the procedure in
     image_deconvolve.ipynb:
 
-    1. Rolling ball background subtraction.
-    2. Robust percentile normalisation to [0, 1].
-    3. Richardson-Lucy deconvolution (15 iterations per channel).
-    4. Additive combination of normalised and deconvolved images.
-    5. Per-channel min-max rescaling of the combined result to [0, 1].
+    1. Resize XY to 1100x1100 (up or down) if not already that size.
+    2. Rolling ball background subtraction.
+    3. Robust percentile normalisation to [0, 1].
+    4. Richardson-Lucy deconvolution (15 iterations per channel) — skipped
+       if apply_deconvolution is False, in which case the normalised image
+       from step 3 is used directly.
+    5. Additive combination of normalised and deconvolved images.
+    6. Per-channel min-max rescaling of the combined result to [0, 1].
 
     Parameters
     ----------
@@ -165,12 +209,21 @@ def preprocess_lsm(
     progress : callable, optional
         Optional callback with signature (step_name: str, pct: int) used
         to relay progress to the UI.
+    apply_deconvolution : bool
+        Whether to run the Richardson-Lucy deconvolution step. This is a
+        user-facing toggle, independent of which MicroSAM model variant is
+        used for inference.
 
     Returns
     -------
     np.ndarray
         Preprocessed (Z, C, Y, X) float32 stack in [0, 1].
     """
+    if image.ndim != 4:
+        raise ValueError(f"Expected 4-D (Z, C, Y, X) array, got shape {image.shape}")
+
+    image = resize_to_target(image, progress=progress)
+
     if progress:
         progress("Starting background subtraction", 0)
 
@@ -178,12 +231,15 @@ def preprocess_lsm(
     img_norm = normalize_robust(img_bg)
     del img_bg
 
-    if progress:
-        progress("Starting RL deconvolution", 0)
+    if apply_deconvolution:
+        if progress:
+            progress("Starting RL deconvolution", 0)
 
-    img_deconv   = _richardson_lucy_deconvolution(img_norm, n_iter=15, progress=progress)
-    img_combined = img_norm + img_deconv
-    del img_norm, img_deconv
+        img_deconv   = _richardson_lucy_deconvolution(img_norm, n_iter=15, progress=progress)
+        img_combined = img_norm + img_deconv
+        del img_norm, img_deconv
+    else:
+        img_combined = img_norm
 
     if progress:
         progress("Finalising preprocessing", 99)
@@ -206,8 +262,9 @@ def preprocess_airyscan(
     progress: Optional[Callable] = None,
 ) -> np.ndarray:
     """
-    Airyscan preprocessing: optional XY downsampling to TARGET_XY (1100 px)
-    followed by robust percentile normalisation.  No deconvolution is applied.
+    Airyscan preprocessing: resize XY to TARGET_XY (1100 px), up or down as
+    needed, followed by robust percentile normalisation.  No deconvolution
+    is applied.
 
     Parameters
     ----------
@@ -221,32 +278,10 @@ def preprocess_airyscan(
     np.ndarray
         Preprocessed (Z, C, Y, X) float32 stack in [0, 1].
     """
-    from skimage.transform import resize as sk_resize
-
     if image.ndim != 4:
         raise ValueError(f"Expected 4-D (Z, C, Y, X) array, got shape {image.shape}")
 
-    Z, C, Y, X = image.shape
-
-    # Only downscale; never upscale images that are already at or below TARGET_XY.
-    if Y > TARGET_XY or X > TARGET_XY:
-        if progress:
-            progress("Downsampling to 1100 px", 0)
-
-        resized = np.zeros((Z, C, TARGET_XY, TARGET_XY), dtype=np.float32)
-        for z in range(Z):
-            for c in range(C):
-                resized[z, c] = sk_resize(
-                    image[z, c],
-                    (TARGET_XY, TARGET_XY),
-                    order=1,            # bilinear interpolation
-                    anti_aliasing=True,
-                    preserve_range=True,
-                )
-            if progress:
-                pct = int(100 * (z + 1) / Z)
-                progress("Downsampling to 1100 px", pct)
-        image = resized
+    image = resize_to_target(image, progress=progress)
 
     if progress:
         progress("Normalising", 99)

@@ -61,7 +61,11 @@ at (native 1834×1834, or already downsampled to 1100×1100 by the
 acquisition software). The auto-detection in
 `BoutonStore.detect_airyscan_voxel_size` picks a pitch by comparing the
 loaded image's actual Y/X size against the `TARGET_XY = 1100` constant in
-`app/model/preprocessing.py`.
+`app/model/preprocessing.py` — this is always the *raw, as-loaded*
+dimensions, not the internal 1100×1100 the pipeline resizes to before
+feeding the model. That internal resize is undone (`PredictionWorker` Step
+4 resizes labels back to the original Y/X) before any volume/surface-area
+stat is computed, so it never affects which pitch applies.
 
 **If your microscope, objective, zoom, or binning settings are different**,
 these defaults will silently apply the *wrong* physical scale to every
@@ -77,30 +81,33 @@ different parameters (`app/model/preprocessing.py`):
 
 **LSM** (`preprocess_lsm`) — full pipeline, because confocal data has no
 computational deconvolution applied at acquisition:
-1. Rolling-ball background subtraction (radius 50 px, per Z-slice/channel).
-2. Robust percentile normalisation to [0, 1] (`normalize_robust`, clipping
+1. Resize XY to 1100×1100 px, up or down as needed (`resize_to_target`) —
+   a no-op if already that size.
+2. Rolling-ball background subtraction (radius 50 px, per Z-slice/channel).
+3. Robust percentile normalisation to [0, 1] (`normalize_robust`, clipping
    at the 0.0001/99.9999 percentiles).
-3. Richardson-Lucy deconvolution, 15 iterations per channel, with a
+4. Richardson-Lucy deconvolution, 15 iterations per channel, with a
    Gaussian PSF of sigma 1.75 for channel 0 (red/BRP) and 1.50 for channel
    1 (green/KC) — these sigma values match the point-spread function
    measured for the confocal setup used in the thesis, not a general
-   default.
-4. The normalised and deconvolved results are added together, then
-   per-channel min-max rescaled back to [0, 1].
+   default. **Optional** — toggled via the "Apply RL deconvolution"
+   checkbox in the dock; when off, step 3's normalised image is used
+   directly instead of being combined with a deconvolved version.
+5. The normalised and deconvolved results are added together (skipped if
+   deconvolution is off), then per-channel min-max rescaled back to [0, 1].
 
 **Airyscan** (`preprocess_airyscan`) — lighter, because Airyscan acquisition
 already performs its own computational super-resolution deconvolution
 on-instrument:
-1. Downscale to 1100×1100 px **only if** the image is larger (never
-   upscales).
+1. Resize XY to 1100×1100 px, up or down as needed (same
+   `resize_to_target` helper as the LSM path).
 2. Robust percentile normalisation to [0, 1] — no deconvolution step at all.
 
-**The "Base" model variant (`vit_b_lm`) always uses the lighter Airyscan-
-style path, even for LSM images** — it skips rolling-ball subtraction and
-deconvolution entirely (`app/model/worker.py`). This is a deliberate
-faster/lighter option, not a bug; if you select Base on an LSM image and
-get softer-looking results, that's expected — the full deconvolution
-pipeline only runs for the Large (`vit_l_lm`) variant on LSM data.
+**The deconvolution toggle is independent of the MicroSAM model variant.**
+Earlier versions tied deconvolution to the "Base" (`vit_b_lm`) vs. "Large"
+(`vit_l_lm`) choice; it is now a separate checkbox so either model variant
+can be run with or without deconvolution on LSM data
+(`app/model/worker.py`, `BoutonDockWidget.apply_deconvolution`).
 
 ## 4. Post-processing
 
