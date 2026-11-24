@@ -74,12 +74,16 @@ class BoutonController:
         self._dock.set_voxel_size(*voxel)
 
         # Remove any existing layers so reloading a new image is clean.
+        # Skip layers the user already deleted in napari's layer list —
+        # removing them again raises "... is not in list" and would abort
+        # this and every later load.
         for layer in list(self._image_layers):
-            self._viewer.layers.remove(layer)
+            if layer in self._viewer.layers:
+                self._viewer.layers.remove(layer)
         self._image_layers = []
-        if self._labels_layer is not None:
+        if self._labels_layer is not None and self._labels_layer in self._viewer.layers:
             self._viewer.layers.remove(self._labels_layer)
-            self._labels_layer = None
+        self._labels_layer = None
 
         vz, vy, vx = self._store.voxel_size_um
 
@@ -184,7 +188,7 @@ class BoutonController:
         self._store.set_labels(labels)
 
         # Remove a stale Labels layer if there is one.
-        if self._labels_layer is not None:
+        if self._labels_layer is not None and self._labels_layer in self._viewer.layers:
             self._viewer.layers.remove(self._labels_layer)
 
         vz, vy, vx = self._store.voxel_size_um
