@@ -39,6 +39,25 @@ class ChannelSafeIntensityAug:
 
 sys.modules["__main__"].ChannelSafeIntensityAug = ChannelSafeIntensityAug
 
+
+# The same checkpoint also references two plain functions from the training
+# script's __main__ (stored as part of its training-time transform
+# pipeline): clip_to_one and scale_to_255. When micro_sam cannot resolve them
+# it logs "Did not find __main__:clip_to_one / scale_to_255" and skips them.
+# The warning is harmless — inference here applies its own normalisation in
+# preprocessing.to_microsam_rgb and never calls these — but registering
+# equivalents silences it and keeps the loader from skipping state.
+def clip_to_one(x):
+    return np.clip(x, 0, 1)
+
+
+def scale_to_255(x):
+    return x * 255
+
+
+sys.modules["__main__"].clip_to_one = clip_to_one
+sys.modules["__main__"].scale_to_255 = scale_to_255
+
 TILE_SHAPE             = (896, 896)
 HALO                   = (64, 64)
 DEFAULT_MODEL_TYPE     = "vit_l_lm"
@@ -54,6 +73,24 @@ MIN_Z_SPAN             = 3     # objects spanning this many Z slices or fewer
 # checkpoints get tried in one session.
 MODEL_CACHE_SIZE = 2
 _model_cache: "OrderedDict[tuple, tuple]" = OrderedDict()
+
+
+def _automatic_segmentation_module():
+    """
+    Returns micro_sam's SAM1 automatic-segmentation module for whichever
+    micro_sam version is installed.
+
+    micro_sam 2.x moved the original (SAM1) code into the ``micro_sam.v1``
+    subpackage to make room for SAM2 under ``micro_sam.v2``; the functions
+    used here kept the same signatures and defaults. micro_sam 1.x exposes
+    them at the top level. Imported lazily so the app starts without
+    paying micro_sam's import cost until a prediction is run.
+    """
+    try:
+        from micro_sam.v1 import automatic_segmentation   # micro_sam >= 2.0
+    except ImportError:
+        from micro_sam import automatic_segmentation      # micro_sam 1.x
+    return automatic_segmentation
 
 
 def load_model(
@@ -87,7 +124,7 @@ def load_model(
         _model_cache.move_to_end(cache_key)   # mark as most recently used
         return _model_cache[cache_key]
 
-    from micro_sam.automatic_segmentation import get_predictor_and_segmenter
+    get_predictor_and_segmenter = _automatic_segmentation_module().get_predictor_and_segmenter
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -143,7 +180,7 @@ def run_inference(
     """
     import gc
 
-    from micro_sam.automatic_segmentation import automatic_instance_segmentation
+    automatic_instance_segmentation = _automatic_segmentation_module().automatic_instance_segmentation
     from scipy.ndimage import label as ndimage_label, generate_binary_structure
     from skimage.morphology import remove_small_objects
 
