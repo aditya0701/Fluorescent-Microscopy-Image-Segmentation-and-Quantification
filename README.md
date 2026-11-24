@@ -36,56 +36,94 @@ viewer, and reports per-bouton volume and surface area in physical units
 
 ## 1. Requirements
 
-- Python 3.10+ (a dedicated conda environment is recommended)
-- A Qt binding for napari (e.g. `PyQt6` or `PyQt5`) — not pulled in
-  automatically by `requirements.txt`, see below
-- A MicroSAM checkpoint (`best.pt`) for the model variant(s) you want to
-  use — these are **not** included in this repository (see §2.3)
-- A CUDA-capable GPU is recommended for reasonable inference speed, but
-  not required — the code falls back to CPU automatically
+- [Miniforge](https://github.com/conda-forge/miniforge) or another conda
+  install (Miniforge is recommended because it uses conda-forge by default)
+- ~5 GB of disk space for the environment
+- A MicroSAM checkpoint for the model variant you want to use — these are
+  **not** included in this repository (see §2.4)
+- A CUDA-capable NVIDIA GPU is recommended for reasonable inference speed,
+  but not required — the code falls back to CPU automatically
 
 ## 2. Setup
 
-### 2.1 Create an environment and install dependencies
+### 2.1 Create the environment
+
+From the repository folder:
 
 ```bash
-conda create -n bouton_viewer python=3.10
+conda env create -f environment.yml
 conda activate bouton_viewer
-pip install -r requirements.txt
 ```
 
-### 2.2 Install a Qt binding
-
-`requirements.txt` installs `napari` and `qtpy`, but `qtpy` is only an
-abstraction layer — napari needs an actual Qt binding underneath. Install
-one explicitly, for example:
+or, equivalently, without the file:
 
 ```bash
-pip install PyQt6
+conda create -n bouton_viewer -c conda-forge python=3.11 "micro_sam>=1.8,<3" pyqt6 tifffile scikit-image tqdm
+conda activate bouton_viewer
 ```
 
-(`run.bat` sets `QT_API=pyqt6` to make sure napari picks this one if more
-than one binding is present in your environment.)
+This installs everything the app needs: **micro-sam**, PyTorch, napari,
+the **PyQt6** Qt binding, and the image-processing libraries. The first
+install downloads a few GB and can take 10–20 minutes.
 
-### 2.3 Install micro-sam
+> [!WARNING]
+> Install everything from **conda-forge**, in one go. Avoid:
+> - `pip install -r requirements.txt` as the main install — it does **not**
+>   install micro-sam or a GPU build of PyTorch on Windows. It's kept only
+>   as a fallback for people managing their own environment.
+> - Creating the env from the Anaconda defaults channel and then adding
+>   conda-forge packages on top. Mixing channels can cause `DLL load failed`
+>   or import errors. If that happens, remove the env
+>   (`conda env remove -n bouton_viewer`) and recreate it with the command
+>   above rather than trying to patch it.
+>
+> If a package is merely missing (`No module named ...`), installing it into
+> the same env with `conda install -c conda-forge <package>` is fine.
 
-micro-sam is not on PyPI in a form pinned by `requirements.txt`. Follow the
-official install instructions for your platform:
-https://computational-cell-analytics.github.io/micro-sam/micro_sam.html
+### 2.2 GPU only: switch to CUDA PyTorch
+
+The environment above installs the CPU build of PyTorch. On a machine with
+an NVIDIA GPU, switch to the CUDA build:
+
+```bash
+conda install -c conda-forge "pytorch=*=cuda*"
+```
+
+### 2.3 Check the install
+
+```bash
+python -c "import torch, micro_sam, napari; from PyQt6 import QtCore; print('torch', torch.__version__, '| CUDA:', torch.cuda.is_available(), '| micro_sam', micro_sam.__version__)"
+```
+
+This should print one line with no errors. On an NVIDIA machine it should
+say `CUDA: True`; if it says `False`, update the NVIDIA driver and repeat
+§2.2.
 
 ### 2.4 Get the model checkpoints
 
 The `models/` folder is excluded from this repository via `.gitignore`
 (the checkpoint files are too large for GitHub). Trained checkpoints
-(`best.pt`, both the Large `vit_l_lm` and Base `vit_b_lm` variants) are
-published on Hugging Face:
+(both the Large `vit_l_lm` and Base `vit_b_lm` variants) are published on
+Hugging Face:
 https://huggingface.co/aditya0701/Drosophilla_melanogaster_Bouton_3d_segmentation/tree/main
 
 Download whichever variant you want and place it anywhere on disk — you
 will point the app at the exact file path from inside the UI, so the
-folder location doesn't matter. See
-[docs/model_notes.md](docs/model_notes.md) for what data these checkpoints
-were trained on and the conditions they're expected to work well under.
+folder location doesn't matter.
+
+- **Use the weights-only checkpoint where one is available**
+  (e.g. `best_weights_only.pt`). It holds the same encoder and decoder
+  weights as the full `best.pt` training checkpoint, without the optimizer
+  state, so it is roughly a third of the size.
+- A `.safetensors` export contains only the image encoder, **not** the
+  instance-segmentation decoder, so the app cannot use it.
+- **The model variant you select in the app must match the checkpoint.**
+  A Base (`vit_b`) checkpoint must be run as **Base (`vit_b_lm`)**; the app
+  defaults to Large.
+
+See [docs/model_notes.md](docs/model_notes.md) for what data these
+checkpoints were trained on and the conditions they're expected to work
+well under.
 
 ## 3. Running the app
 
@@ -148,8 +186,9 @@ every keystroke) — no need to re-run Predict.
 ### 4.3 Set the checkpoint and model variant
 
 1. In the **MicroSAM Checkpoint** section, click **…** and select your
-   `best.pt` file.
+   checkpoint file (e.g. `best.pt` or `best_weights_only.pt`).
 2. Choose the model variant: **Large (`vit_l_lm`)** or **Base (`vit_b_lm`)**.
+   It **must match the checkpoint** you selected (see §2.4).
    - This only affects inference speed/quality, not preprocessing. (In
      earlier versions, selecting Base on an LSM image automatically
      switched preprocessing to the lighter, deconvolution-free path used

@@ -1,20 +1,21 @@
-# BoutonViewer dependencies
-# Install with: pip install -r requirements.txt
+# BoutonViewer pip dependencies — FALLBACK ONLY.
 #
-# micro-sam must be installed from source or its own environment.
-# All other packages install cleanly from PyPI.
+# The recommended install is the conda environment, which also provides
+# micro-sam (not reliably pip-installable) and a matching PyTorch build:
+#   conda env create -f environment.yml
 #
-# Recommended: create a dedicated conda environment first:
-#   conda create -n bouton_viewer python=3.10
-#   conda activate bouton_viewer
-#   pip install -r requirements.txt
-#
-# Then install micro-sam following the official instructions:
+# Use this file only if you are managing your own environment and have
+# already installed micro-sam yourself:
 #   https://computational-cell-analytics.github.io/micro-sam/micro_sam.html
+#
+# Note: on Windows, `pip install torch` installs the CPU-only build. For an
+# NVIDIA GPU install PyTorch first using the command from
+# https://pytorch.org/get-started/locally/ and then run this file.
 
-# Desktop UI and 3D/2D display (replaces PyQt6 + pyvista + vtk)
+# Desktop UI and 3D/2D display
 napari>=0.5.0
 qtpy>=2.0.0
+PyQt6                # Qt binding napari runs on (run.bat sets QT_API=pyqt6)
 
 # Image I/O
 tifffile>=2024.1.1
@@ -31,5 +32,4 @@ torchvision>=0.15.0
 # Progress display (used inside worker thread)
 tqdm>=4.66.0
 
-# micro-sam is installed separately — see note above.
-# micro-sam>=1.0.0
+# micro-sam: NOT installed by this file — see note at the top.

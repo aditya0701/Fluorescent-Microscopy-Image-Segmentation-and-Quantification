@@ -1,0 +1,27 @@
+# BoutonViewer conda environment (recommended install path).
+#
+#   conda env create -f environment.yml
+#   conda activate bouton_viewer
+#
+# Everything comes from conda-forge so that PyTorch, Qt and micro-sam are
+# built against the same libraries. Mixing in packages from the Anaconda
+# "defaults" channel or from pip can cause DLL / import errors on Windows.
+#
+# This installs the CPU build of PyTorch. On a machine with an NVIDIA GPU,
+# switch to the CUDA build afterwards (see README §2.2):
+#   conda install -c conda-forge "pytorch=*=cuda*"
+name: bouton_viewer
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - micro_sam>=1.8,<3   # 1.x and 2.x both supported; pulls in pytorch, napari, numpy, scipy
+  - napari>=0.5
+  - pyqt6            # Qt binding napari needs (run.bat sets QT_API=pyqt6)
+  - qtpy>=2.0
+  - tifffile
+  - scikit-image
+  - scipy
+  - numpy
+  - tqdm
