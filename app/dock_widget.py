@@ -227,9 +227,13 @@ class BoutonDockWidget(QWidget):
         self._deconv_checkbox.setChecked(True)
         self._deconv_checkbox.setToolTip(
             "Richardson-Lucy deconvolution step of the LSM preprocessing "
-            "pipeline. Only applies when 'LSM' is selected above; has no "
-            "effect for Airyscan."
+            "pipeline. Only applies when 'LSM' is selected above. Airyscan "
+            "data is already deconvolved at acquisition, so the box is "
+            "unticked and locked while Airyscan is selected."
         )
+        # The user's LSM choice, remembered while Airyscan forces the box
+        # off, so switching back to LSM restores it.
+        self._lsm_deconv_choice = True
         self._deconv_checkbox.toggled.connect(
             lambda checked: self.deconvolution_changed.emit(checked)
         )
@@ -419,7 +423,21 @@ class BoutonDockWidget(QWidget):
 
     def _on_type_combo_changed(self, _idx: int):
         image_type = self._selected_image_type()
-        self._deconv_checkbox.setEnabled(image_type == "LSM")
+        is_lsm = image_type == "LSM"
+
+        # Airyscan never runs deconvolution, so show the box unticked and
+        # locked rather than greyed out with a misleading tick. Signals are
+        # blocked because this is a display change, not a user toggle.
+        self._deconv_checkbox.blockSignals(True)
+        if is_lsm:
+            self._deconv_checkbox.setChecked(self._lsm_deconv_choice)
+        else:
+            if self._deconv_checkbox.isEnabled():
+                self._lsm_deconv_choice = self._deconv_checkbox.isChecked()
+            self._deconv_checkbox.setChecked(False)
+        self._deconv_checkbox.setEnabled(is_lsm)
+        self._deconv_checkbox.blockSignals(False)
+
         self.image_type_changed.emit(image_type)
 
     def _on_voxel_spin_changed(self, _value: float):
